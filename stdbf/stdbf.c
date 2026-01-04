@@ -1,35 +1,18 @@
 #include "stdbf.h"
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
 
 void start(void) {
   extern int entry(void);
   entry();
-  ExitProcess(0);
 }
 
-void bfputchar(char c) {
-  HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-  DWORD written;
-  WriteFile(h, &c, 1, &written, NULL);
-}
+void bfputchar(char c) {}
 
-char bfgetchar() {
-  HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-  DWORD written;
-  char c;
-  ReadFile(h, &c, 1, &written, NULL);
-  return c;
-}
+char bfgetchar() {}
 
-char *bfcalloc(unsigned long long size) {
-  HANDLE heap = GetProcessHeap();
-  void *p = HeapAlloc(heap, HEAP_ZERO_MEMORY, size);
-  return (char *)p;
-};
+char *bfcalloc(unsigned long long size) {};
 
-void bffree(char *ptr) { HeapFree(GetProcessHeap(), 0, ptr); };
+void bffree(char *ptr) {};
 
 #endif

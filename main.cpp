@@ -1,13 +1,9 @@
-#include <exception>
 #include <filesystem>
 #include <format>
 #include <iostream>
-#include <llvm/Support/raw_ostream.h>
-#include <llvm/TargetParser/Host.h>
 #include <memory>
 #include <optional>
 #include <ostream>
-#include <print>
 #include <string>
 
 #include <llvm/ExecutionEngine/Orc/Core.h>
@@ -20,9 +16,13 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/TargetParser/Host.h>
 
 #include "bfc.hpp"
+#include "cli.hpp"
 #include "irc.hpp"
+#include "jit.hpp"
 #include "utils.hpp"
 
 int main(int argc, char **argv) {
@@ -43,45 +43,16 @@ int main(int argc, char **argv) {
   std::string sourceFileName{argv[1]};
   auto file = readfile(sourceFileName);
   if (!file) {
-    std::println("invalid path of source file:{}", sourceFileName);
+    std::cout << "failed to open brainf**k file: " << sourceFileName
+              << std::endl;
     return 0;
   }
 
-  auto isEmitIR = false;
-  auto isJitRun = false;
-  std::string target = llvm::sys::getDefaultTargetTriple();
-  auto memsize = BfCompilerOption::defaultMemSize;
-  std::string stdLibDir = "./";
-
-  if (argc > 2) {
-    for (int i = 2; i < argc; i++) {
-      const std::string op{argv[i]};
-      if (op == "-emit-llvm") {
-        isEmitIR = true;
-      } else if (op == "-jit") {
-        isJitRun = true;
-      } else if (op.starts_with("-memsize=")) {
-        std::string memsizeStr = op.substr(std::size("-memsize=") - 1);
-        try {
-          memsize = std::stoull(memsizeStr);
-        } catch (std::exception) {
-          std::println("please invalid value to -memsize option");
-          memsize = BfCompilerOption::defaultMemSize;
-        }
-      } else if (op.starts_with("-target=")) {
-        target = op.substr(std::size("-target=") - 1);
-      } else if (op.starts_with("-stdbf=")) {
-
-      } else {
-        std::print("unknown option: \"{}\". ", op);
-        std::println("this unknown option is ignored");
-      }
-    }
-  }
+  auto option = parseCLIoption(argc, argv);
 
   llvm::LLVMContext context{};
   BrainFxxkCompiler bfc{context};
-  auto mainModule = bfc.compile(file.value(), {memsize});
+  auto mainModule = bfc.compile(file.value(), {option.memsize()});
 
   if (!mainModule) {
     printCompileError(file.value(), mainModule.error());
@@ -96,24 +67,22 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  if (isEmitIR) {
+  if (option.emitIR()) {
     auto sourcePath = std::filesystem::path{sourceFileName};
+    auto irFilePath = sourcePath.replace_extension("ll").string();
 
-    auto irOutDir = sourcePath.parent_path();
-    auto irname = sourcePath.stem();
-    auto irFilePath =
-        std::format("{}./{}.ll", irOutDir.string(), irname.string());
     std::error_code errorCode;
     llvm::raw_fd_ostream outfile(irFilePath, errorCode, llvm::sys::fs::OF_Text);
     mainModule->get()->print(outfile, nullptr);
+
     if (errorCode) {
-      std::println("failed to write LLVM IR to file \"{}\" code: {}",
-                   irFilePath, errorCode.message());
+      std::cout << "failed to write LLVM IR to file " << irFilePath
+                << "code: " << errorCode.message() << std::endl;
       return 0;
     }
   }
 
-  if (isJitRun) {
+  if (option.JITRun()) {
 #ifdef ASAN_ENABLED
     std::cout << "cannot JIT compilation on this address sanitizer enabled "
                  "executable"
@@ -129,19 +98,27 @@ int main(int argc, char **argv) {
 
   } else {
     auto sourcePath = std::filesystem::path{sourceFileName};
-    auto outPath = std::format("{}./{}.exe", sourcePath.parent_path().string(),
-                               sourcePath.stem().string());
-    auto bfObjPath =
-        std::format("{}./{}.obj", sourcePath.parent_path().string(),
-                    sourcePath.stem().string());
-    auto compile2objResult =
-        compileIR2obj(bfObjPath, std::move(mainModule.value()), target);
+    auto outPath = sourcePath.replace_extension("exe").string();
+    auto bfObjPath = sourcePath.replace_extension("obj").string();
+
+    auto compile2objResult = compileIR2obj(
+        bfObjPath, std::move(mainModule.value()), option.target());
+
     if (!compile2objResult) {
       std::cout << "failed to compile object file: "
                 << compile2objResult.error() << std::endl;
       return 0;
     }
-    auto linkExecResult = linkExecutable(target, bfObjPath, outPath);
+
+    auto stdbf = findBrainfxxkStdLib(argv[0], option.target());
+    if (!stdbf) {
+      std::cout << "failed to find standart brainfxxk library: "
+                << stdbf.error() << std::endl;
+      return 0;
+    }
+    std::cout << stdbf->string() << std::endl;
+    auto linkExecResult =
+        linkExecutable(option.target(), stdbf->string(), bfObjPath, outPath);
     if (!linkExecResult) {
       std::cout << "failed to link executable by using lld: "
                 << linkExecResult.error() << std::endl;

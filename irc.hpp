@@ -23,14 +23,13 @@ compileIR2obj(const std::string &outPath,
               const std::string &targetTiple) {
 
   llvm::Triple triple{targetTiple};
-
   std::string lookupTargetError;
 
   auto target = llvm::TargetRegistry::lookupTarget(triple, lookupTargetError);
   if (!target) {
     return std::unexpected{lookupTargetError};
   }
-  std::cout << "compiling to target:" << triple.getTriple() << std::endl;
+
   mainModule->setTargetTriple(triple);
 
   llvm::TargetOptions opt;
@@ -59,18 +58,23 @@ compileIR2obj(const std::string &outPath,
   return {};
 }
 
+LLD_HAS_DRIVER(coff)
+// LLD_HAS_DRIVER(mingw)
+
 inline std::expected<void, std::string>
-linkExecutable(const std::string &targetTriple, const std::string &objFilePath,
+linkExecutable(const std::string &targetTriple, const std::string &stdlibPath,
+               const std::string &objFilePath,
                const std::string &executableName) {
 
   if (targetTriple == "x86_64-pc-windows-msvc") {
     /*
-      link ./helloworld.obj ./stdbf.obj /OUT:helloworld.exe /SUBSYSTEM:CONSOLE \
-      /ENTRY:start kernel32.lib
+      link *compiled-bf-object-file *bf-stdlib /OUT:*outputname
+      /SUBSYSTEM:CONSOLE \ /ENTRY:start kernel32.lib
     */
+
     auto execName = std::format("/OUT:{}", executableName);
     auto args = {
-        "lld-link",       objFilePath.c_str(),  "./stdbf.obj",
+        "lld-link",       objFilePath.c_str(),  stdlibPath.c_str(),
         execName.c_str(), "/SUBSYSTEM:CONSOLE", "/ENTRY:start",
         "kernel32.lib",
     };
@@ -79,7 +83,7 @@ linkExecutable(const std::string &targetTriple, const std::string &objFilePath,
     llvm::raw_string_ostream lldOut{lldOutsStr}, lldErr{lldErrStr};
 
     auto result =
-        lld::lldMain(args, lldOut, lldErr, llvm::ArrayRef<lld::DriverDef>{});
+        lld::lldMain(args, lldOut, lldErr, {{lld::WinLink, &lld::coff::link}});
 
     lldOut.flush();
     lldErr.flush();
