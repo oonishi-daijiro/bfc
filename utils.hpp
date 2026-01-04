@@ -2,6 +2,7 @@
 
 #include <expected>
 #include <filesystem>
+#include <lld/Common/Driver.h>
 #include <llvm/IR/Verifier.h>
 #include <memory>
 #include <optional>
@@ -17,5 +18,8 @@ void printCompileError(const std::vector<char> &source, CompileError &error);
 std::expected<void, std::string> verifyLLVMModule(llvm::Module &m);
 
 std::expected<std::filesystem::path, std::string>
-findBrainfxxkStdLib(const std::string &ownProcAbsPath,
-                    const std::string &target);
+findBrainFxxkRuntime(const std::string &target);
+
+std::expected<std::string, std::string>
+runLLD(std::span<const char *> arg, std::span<lld::DriverDef> drivers);
+#define VERBOSE_LOG_PREFIX "[bfc] "

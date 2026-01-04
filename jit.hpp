@@ -15,6 +15,6 @@
 #include <llvm/Support/Error.h>
 #include <llvm/Support/raw_ostream.h>
 
-#include "stdbfjit/stdbfjit.hpp"
+#include "bfrtjit/bfrtjit.hpp"
 
 std::expected<int, std::string> JITRun(std::unique_ptr<llvm::Module> llModule);

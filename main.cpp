@@ -1,6 +1,7 @@
 #include <filesystem>
 #include <format>
 #include <iostream>
+#include <llvm/IR/CallingConv.h>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -49,6 +50,9 @@ int main(int argc, char **argv) {
   }
 
   auto option = parseCLIoption(argc, argv);
+  if (option.verbose()) {
+    std::cout << VERBOSE_LOG_PREFIX << "initalizing LLVM" << std::endl;
+  }
 
   llvm::LLVMContext context{};
   BrainFxxkCompiler bfc{context};
@@ -57,6 +61,10 @@ int main(int argc, char **argv) {
   if (!mainModule) {
     printCompileError(file.value(), mainModule.error());
     return 0;
+  }
+
+  if (option.verbose()) {
+    std::cout << VERBOSE_LOG_PREFIX << "verifying LLVM IR" << std::endl;
   }
 
   auto verifyResult = verifyLLVMModule(*mainModule->get());
@@ -70,7 +78,7 @@ int main(int argc, char **argv) {
   if (option.emitIR()) {
     auto sourcePath = std::filesystem::path{sourceFileName};
     auto irFilePath = sourcePath.replace_extension("ll").string();
-
+    std::cout << "writing LLVM IR into" << irFilePath << std::endl;
     std::error_code errorCode;
     llvm::raw_fd_ostream outfile(irFilePath, errorCode, llvm::sys::fs::OF_Text);
     mainModule->get()->print(outfile, nullptr);
@@ -99,10 +107,10 @@ int main(int argc, char **argv) {
   } else {
     auto sourcePath = std::filesystem::path{sourceFileName};
     auto outPath = sourcePath.replace_extension("exe").string();
-    auto bfObjPath = sourcePath.replace_extension("obj").string();
+    auto bfObjPath = sourcePath.replace_extension("o").string();
 
     auto compile2objResult = compileIR2obj(
-        bfObjPath, std::move(mainModule.value()), option.target());
+        bfObjPath, std::move(mainModule.value()), option.verbose());
 
     if (!compile2objResult) {
       std::cout << "failed to compile object file: "
@@ -110,17 +118,27 @@ int main(int argc, char **argv) {
       return 0;
     }
 
-    auto stdbf = findBrainfxxkStdLib(argv[0], option.target());
-    if (!stdbf) {
-      std::cout << "failed to find standart brainfxxk library: "
-                << stdbf.error() << std::endl;
+    if (option.onlyCompile()) {
       return 0;
     }
-    std::cout << stdbf->string() << std::endl;
-    auto linkExecResult =
-        linkExecutable(option.target(), stdbf->string(), bfObjPath, outPath);
+
+    auto bfrtPath = findBrainFxxkRuntime(argv[0]);
+    if (!bfrtPath) {
+      std::cout << "failed to find brainfuck runtime library: "
+                << bfrtPath.error() << std::endl;
+      return 0;
+    }
+
+    auto linkExecResult = linkExecutable(bfrtPath->string(), bfObjPath, outPath,
+                                         option.verbose());
+    if (option.verbose()) {
+      std::cout << VERBOSE_LOG_PREFIX << "removing object file: " << bfObjPath
+                << std::endl;
+    }
+    std::filesystem::remove(bfObjPath);
+
     if (!linkExecResult) {
-      std::cout << "failed to link executable by using lld: "
+      std::cout << "failed to link executable by using lld:\n"
                 << linkExecResult.error() << std::endl;
       return 0;
     }

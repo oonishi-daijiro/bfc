@@ -141,7 +141,7 @@ BrainFxxkCompiler::compile(const std::vector<char> &source,
   } // end of for
 
   if (!bbStack.empty()) {
-    return std::unexpected(CompileError{0, "no enough \"]\" for \"]\""});
+    return std::unexpected(CompileError{0, "no match \"]\" for \"]\""});
   }
 
   builder->CreateCall(freeFn, {memory});

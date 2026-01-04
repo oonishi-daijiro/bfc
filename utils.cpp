@@ -1,10 +1,10 @@
-#pragma once
-
 #include <expected>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <lld/Common/Driver.h>
+#include <span>
 #include <vector>
 
 #include <llvm/Support/Error.h>
@@ -65,15 +65,30 @@ inline std::string lltos(auto *inst) {
 }
 
 std::expected<std::filesystem::path, std::string>
-findBrainfxxkStdLib(const std::string &ownProcAbsPath,
-                    const std::string &target) {
+findBrainFxxkRuntime(const std::string &ownProcAbsPath) {
   using namespace std::filesystem;
   std::filesystem::path p{ownProcAbsPath};
-  auto stdlibPath =
-      p.parent_path() / path{std::format("/lib/stdbf.{}.lib", target)};
-  if (!std::filesystem::exists(stdlibPath)) {
+  auto rtPath = (p.parent_path() / ".." / "lib" / "bfrt.a").lexically_normal();
+
+  if (!std::filesystem::exists(rtPath)) {
     return std::unexpected{
-        std::format("unable to find target stdlib for target {}", target)};
+        std::format("brainf**k runtime does not exist: {}", rtPath.string())};
   }
-  return p;
+  return rtPath;
+};
+
+std::expected<std::string, std::string>
+runLLD(std::span<const char *> arg, std::span<lld::DriverDef> drivers) {
+  std::string lldOutsStr{}, lldErrStr{};
+  llvm::raw_string_ostream lldOut{lldOutsStr}, lldErr{lldErrStr};
+  auto result = lld::lldMain(arg, lldOut, lldErr, drivers);
+
+  lldOut.flush();
+  lldErr.flush();
+
+  if (result.retCode != 0) {
+    return std::unexpected{lldErrStr};
+  } else {
+    return lldOutsStr;
+  }
 };

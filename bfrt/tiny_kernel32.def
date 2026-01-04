@@ -1,0 +1,10 @@
+; kernel32.def
+LIBRARY kernel32.dll
+EXPORTS
+   GetStdHandle
+   ExitProcess
+   ReadFile
+   WriteFile
+   GetProcessHeap
+   HeapAlloc
+   HeapFree
