@@ -15,7 +15,7 @@ void bfputchar(char c) {
 }
 
 char bfgetchar() {
-  HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+  HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
   DWORD written;
   char c;
   ReadFile(h, &c, 1, &written, NULL);
