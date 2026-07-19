@@ -1,150 +1,216 @@
+#include <cstddef>
+#include <cstdio>
+#include <format>
+#include <llvm/IR/Module.h>
 #include <stack>
+#include <vector>
 
 #include "bfc.hpp"
 
-std::expected<BrainFxxkCompiler::module_ptr, CompileError>
-BrainFxxkCompiler::compile(const std::vector<char> &source,
-                           BfCompilerOption option) {
-  auto i32ty = builder->getInt32Ty();
-  auto i8ty = builder->getInt8Ty();
-  auto i64ty = builder->getInt64Ty();
-  auto voidty = builder->getVoidTy();
-  auto ptrTy = llvm::PointerType::get(context, 0);
+Runtime::Runtime(llvm::LLVMContext &ctx, llvm::Module &module,
+                 builder_ptr builder, const BfCompilerOption &option)
+    : functions{}, types{}, constants{} {
+  types.i32 = builder->getInt32Ty();
+  types.i8 = builder->getInt8Ty();
+  types.i64 = builder->getInt64Ty();
+  types.vo1d = builder->getVoidTy();
+  types.ptr = llvm::PointerType::get(ctx, 0);
+  types.mem = llvm::ArrayType::get(types.i8, option.memsize);
 
-  auto putcharFnTy = llvm::FunctionType::get(voidty, {i8ty}, false);
-  auto getcharFnTy = llvm::FunctionType::get(i8ty, {}, false);
-  auto callocFnTy = llvm::FunctionType::get(ptrTy, {i64ty}, false);
-  auto freeFnTy = llvm::FunctionType::get(voidty, {ptrTy}, false);
+  types.putchar = llvm::FunctionType::get(types.vo1d, {types.i8}, false);
+  types.getchar = llvm::FunctionType::get(types.i8, {}, false);
+  types.calloc = llvm::FunctionType::get(types.ptr, {types.i64}, false);
+  types.free = llvm::FunctionType::get(types.vo1d, {types.ptr}, false);
 
-  auto entryFnTy = llvm::FunctionType::get(i32ty, false);
-  auto arrayTy = llvm::ArrayType::get(i8ty, option.memsize);
+  auto entryFnTy = llvm::FunctionType::get(types.i32, false);
 
-  auto i8zero = builder->getInt8(0);
-  auto i8one = builder->getInt8(1);
+  constants.i8zero = builder->getInt8(0);
+  constants.i8one = builder->getInt8(1);
+  constants.i64zero = builder->getInt64(0);
+  constants.i64one = builder->getInt64(1);
+  constants.i64memsize = builder->getInt64(option.memsize);
 
-  auto i64zero = builder->getInt64(0);
-  auto i64one = builder->getInt64(1);
-  auto i64memsize = builder->getInt64(option.memsize);
+  functions.putchar = llvm::Function::Create(
+      types.putchar, llvm::Function::ExternalLinkage, "bfputchar", &module);
 
-  auto putcharFn = llvm::Function::Create(
-      putcharFnTy, llvm::Function::ExternalLinkage, "bfputchar", mod.get());
+  functions.getchar = llvm::Function::Create(
+      types.getchar, llvm::Function::ExternalLinkage, "bfgetchar", &module);
+  functions.calloc = llvm::Function::Create(
+      types.calloc, llvm::Function::ExternalLinkage, "bfcalloc", &module);
 
-  auto getcharFn = llvm::Function::Create(
-      getcharFnTy, llvm::Function::ExternalLinkage, "bfgetchar", mod.get());
+  functions.free = llvm::Function::Create(
+      types.free, llvm::Function::ExternalLinkage, "bffree", &module);
 
-  auto callocFn = llvm::Function::Create(
-      callocFnTy, llvm::Function::ExternalLinkage, "bfcalloc", mod.get());
+  functions.entry = llvm::Function::Create(
+      entryFnTy, llvm::Function::ExternalLinkage, "entry", &module);
+};
 
-  auto freeFn = llvm::Function::Create(
-      freeFnTy, llvm::Function::ExternalLinkage, "bffree", mod.get());
-
-  auto entryFn = llvm::Function::Create(
-      entryFnTy, llvm::Function::ExternalLinkage, "entry", mod.get());
-
-  auto entryBB = llvm::BasicBlock::Create(context, "", entryFn);
-
+std::expected<module_ptr, CompileError>
+BrainFxxkCompiler::compile(BFIRHandle &&ir) {
+  auto entryBB = llvm::BasicBlock::Create(context, "", rt.functions.entry);
   builder->SetInsertPoint(entryBB);
 
-  auto memory = builder->CreateCall(callocFn, {i64memsize});
-  auto i64index = builder->CreateAlloca(i64ty, nullptr, "index");
+  rt.memory.ptr =
+      builder->CreateCall(rt.functions.calloc, {rt.constants.i64memsize});
+  rt.memory.index = builder->CreateAlloca(rt.types.i64, nullptr, "index");
 
-  builder->CreateStore(i64zero, i64index);
+  for (auto i : ir) {
+    compile(i);
+  }
 
-  std::stack<std::tuple<llvm::BasicBlock *, llvm::BasicBlock *>> bbStack{};
+  builder->CreateCall(rt.functions.free, {rt.memory.ptr});
+  builder->CreateRet(builder->getInt32(0));
+  return {std::move(mod)};
+};
+
+void BrainFxxkCompiler::compile(BFIR *ir) {
+  if (auto mp = ir->isa<MovePtr>()) {
+    compile(mp.value());
+  } else if (auto tp = ir->isa<TransformPointee>()) {
+    compile(tp.value());
+  } else if (auto in = ir->isa<In>()) {
+    compile(in.value());
+  } else if (auto out = ir->isa<Out>()) {
+    compile(out.value());
+  } else if (auto lp = ir->isa<Loop>()) {
+    compile(lp.value());
+  }
+}
+
+void BrainFxxkCompiler::compile(MovePtr *ir) {
+  auto ptrVal = builder->CreateLoad(rt.types.i64, rt.memory.index);
+  auto moveAmount = builder->getInt64(ir->amount());
+  builder->CreateStore(builder->CreateAdd(ptrVal, moveAmount), rt.memory.index);
+}
+
+void BrainFxxkCompiler::compile(TransformPointee *ir) {
+  auto index = builder->CreateLoad(rt.types.i64, rt.memory.ptr);
+  auto pointingElmPtr = builder->CreateGEP(rt.types.mem, rt.memory.ptr,
+                                           {rt.constants.i64zero, index});
+  auto pointee = builder->CreateLoad(rt.types.i8, pointingElmPtr);
+  auto val = builder->getInt8(ir->val());
+  builder->CreateStore(builder->CreateAdd(pointee, val), pointingElmPtr);
+}
+
+void BrainFxxkCompiler::compile(In *ir) {
+  auto index = builder->CreateLoad(rt.types.i64, rt.memory.index);
+  auto cur = builder->CreateGEP(rt.types.mem, rt.memory.ptr,
+                                {rt.constants.i64zero, index});
+  auto putVar = builder->CreateLoad(rt.types.i8, cur);
+  builder->CreateCall(rt.functions.putchar, {putVar});
+}
+
+void BrainFxxkCompiler::compile(Out *ir) {
+  auto index = builder->CreateLoad(rt.types.i64, rt.memory.index);
+  auto cur = builder->CreateGEP(rt.types.mem, rt.memory.ptr,
+                                {rt.constants.i64zero, index});
+  auto ret = builder->CreateCall(rt.functions.getchar, {});
+  builder->CreateStore(ret, cur);
+}
+
+void BrainFxxkCompiler::compile(Loop *ir) {
+  auto bb = llvm::BasicBlock::Create(context, "", rt.functions.entry);
+  auto merge = llvm::BasicBlock::Create(context, "");
+
+  {
+    auto index = builder->CreateLoad(rt.types.i64, rt.memory.index);
+    auto pointee = builder->CreateLoad(
+        rt.types.i8, builder->CreateGEP(rt.types.mem, rt.memory.ptr,
+                                        {rt.constants.i64zero, index}));
+    auto cond = builder->CreateICmpEQ(pointee, rt.constants.i8zero);
+    builder->CreateCondBr(cond, merge, bb);
+    builder->SetInsertPoint(bb);
+  }
+
+  for (auto i : ir->operations()) {
+    compile(i);
+  }
+
+  {
+    auto index = builder->CreateLoad(rt.types.i64, rt.memory.index);
+    auto pointee = builder->CreateLoad(
+        rt.types.i8, builder->CreateGEP(rt.types.mem, rt.memory.ptr,
+                                        {rt.constants.i64zero, index}));
+    auto cond = builder->CreateICmpEQ(pointee, rt.constants.i8zero);
+    auto parentFunc = builder->GetInsertBlock()->getParent();
+
+    builder->CreateCondBr(cond, merge, bb);
+    merge->insertInto(parentFunc);
+    builder->SetInsertPoint(merge);
+  }
+}
+
+std::expected<BFIRHandle, CompileError>
+BrainFxxkCompiler::compile(const std::vector<char> &src) {
+  std::vector<BFIR *> vec{};
+  std::stack<Loop *> lps;
   size_t index = 0;
-  for (const auto c : source) {
+
+  auto emplaceOperation = [&](auto ir) {
+    if (lps.empty()) {
+      lps.top()->add(ir);
+    } else {
+      vec.emplace_back(ir);
+    };
+  };
+
+  for (auto c : src) {
     index++;
+
     switch (c) {
-    default: {
-      continue;
-    }
     case '>': {
-      auto ptrVal = builder->CreateLoad(i64ty, i64index);
-      builder->CreateStore(builder->CreateAdd(ptrVal, i64one), i64index);
+      emplaceOperation(new MovePtr(1));
       continue;
     }
     case '<': {
-      auto ptrVal = builder->CreateLoad(i64ty, i64index);
-      builder->CreateStore(builder->CreateSub(ptrVal, i64one), i64index);
+      emplaceOperation(new MovePtr(-1));
       continue;
     }
 
     case '+': {
-      auto index = builder->CreateLoad(i64ty, i64index);
-      auto pointingElmPtr =
-          builder->CreateGEP(arrayTy, memory, {i64zero, index});
-      auto pointee = builder->CreateLoad(i8ty, pointingElmPtr);
-      builder->CreateStore(builder->CreateAdd(pointee, i8one), pointingElmPtr);
+      emplaceOperation(new TransformPointee(1));
       continue;
     }
 
     case '-': {
-      auto index = builder->CreateLoad(i64ty, i64index);
-      auto pointingElmPtr =
-          builder->CreateGEP(arrayTy, memory, {i64zero, index});
-      auto pointee = builder->CreateLoad(i8ty, pointingElmPtr);
-      builder->CreateStore(builder->CreateSub(pointee, i8one), pointingElmPtr);
+      emplaceOperation(new TransformPointee(-1));
       continue;
     }
 
     case '.': {
-      auto index = builder->CreateLoad(i64ty, i64index);
-      auto cur = builder->CreateGEP(arrayTy, memory, {i64zero, index});
-      auto putVar = builder->CreateLoad(i8ty, cur);
-      builder->CreateCall(putcharFn, {putVar});
+      emplaceOperation(new Out());
       continue;
     }
 
     case ',': {
-      auto index = builder->CreateLoad(i64ty, i64index);
-      auto cur = builder->CreateGEP(arrayTy, memory, {i64zero, index});
-      auto ret = builder->CreateCall(getcharFn, {});
-      builder->CreateStore(ret, cur);
+      emplaceOperation(new In());
       continue;
     }
 
     case '[': {
-      auto bb = llvm::BasicBlock::Create(context, "", entryFn);
-      auto merge = llvm::BasicBlock::Create(context, "");
-
-      auto index = builder->CreateLoad(i64ty, i64index);
-      auto pointee = builder->CreateLoad(
-          i8ty, builder->CreateGEP(arrayTy, memory, {i64zero, index}));
-      auto cond = builder->CreateICmpEQ(pointee, i8zero);
-
-      bbStack.push({bb, merge});
-      builder->CreateCondBr(cond, merge, bb);
-      builder->SetInsertPoint(bb);
+      lps.push(new Loop());
       continue;
     }
 
     case ']': {
-      if (bbStack.empty()) {
+      if (lps.empty()) {
         return std::unexpected{
             CompileError{index, "no matching \"[\" for this bracket"}};
       }
-
-      auto [body, merge] = bbStack.top();
-      bbStack.pop();
-      auto index = builder->CreateLoad(i32ty, i64index);
-      auto pointee = builder->CreateLoad(
-          i8ty, builder->CreateGEP(arrayTy, memory, {i64zero, index}));
-      auto cond = builder->CreateICmpEQ(pointee, i8zero);
-      auto parentFunc = builder->GetInsertBlock()->getParent();
-
-      builder->CreateCondBr(cond, merge, body);
-      merge->insertInto(parentFunc);
-      builder->SetInsertPoint(merge);
+      auto top = lps.top();
+      lps.pop();
+      emplaceOperation(top);
       continue;
-    } // case ']'
-    } // switch
-  } // end of for
+    }
 
-  if (!bbStack.empty()) {
+    default:
+      continue;
+    }
+  }
+
+  if (!lps.empty()) {
     return std::unexpected(CompileError{0, "no match \"]\" for \"]\""});
   }
 
-  builder->CreateCall(freeFn, {memory});
-  builder->CreateRet(builder->getInt32(0));
-  return {std::move(mod)};
+  return vec;
 }

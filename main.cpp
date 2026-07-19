@@ -55,8 +55,15 @@ int main(int argc, char **argv) {
   }
 
   llvm::LLVMContext context{};
-  BrainFxxkCompiler bfc{context};
-  auto mainModule = bfc.compile(file.value(), {option.memsize()});
+  BrainFxxkCompiler bfc{context, {option.memsize()}};
+
+  auto bfir = bfc.compile(file.value());
+  if (!bfir) {
+    printCompileError(file.value(), bfir.error());
+    return 0;
+  }
+
+  auto mainModule = bfc.compile(std::move(bfir.value()));
 
   if (!mainModule) {
     printCompileError(file.value(), mainModule.error());

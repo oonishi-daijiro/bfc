@@ -22,13 +22,15 @@ CommandLineOptions parseCLIoption(int argc, char **argv) {
       size_t memsize = BfCompilerOption::defaultMemSize;
       try {
         memsize = std::stoull(*value);
+        opt.setMemsize(memsize);
       } catch (std::exception) {
         std::cout << "invalid format of -memsize option:" << *value
                   << "set to default size: " << memsize << std::endl;
       }
-      opt.setMemsize(memsize);
     } else if (auto outFileName = parseOptValue(op, "o")) {
       opt.setOutputFileName(*outFileName);
+    } else if (op == "-optimize") {
+      opt.setEnableOptimization(true);
     } else {
       std::cout << std::format("unknown option \"{}\"", op) << std::endl;
     }

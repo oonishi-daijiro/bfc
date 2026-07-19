@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <lld/Common/Driver.h>
+#include <llvm/IR/Value.h>
 #include <llvm/IR/Verifier.h>
 #include <memory>
 #include <optional>

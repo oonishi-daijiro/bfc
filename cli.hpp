@@ -13,6 +13,7 @@ class CommandLineOptions {
   bool _emitLLVMIR = false;
   bool _onlyCompile = false;
   bool _verbose = false;
+  bool _enableOptimization = false;
   size_t _memsize = BfCompilerOption::defaultMemSize;
   std::string _outputName = "a.out";
 
@@ -23,12 +24,14 @@ public:
   void setOutputFileName(const std::string &f) { _outputName = f; }
   void setVerbose(bool v) { _verbose = v; }
   void setOnlyCompile(bool v) { _onlyCompile = v; }
+  void setEnableOptimization(bool v) { _enableOptimization = v; }
 
   auto JITRun() const { return _runJIT; }
   auto emitIR() const { return _emitLLVMIR; }
   auto memsize() const { return _memsize; }
   auto verbose() const { return _verbose; }
   auto onlyCompile() const { return _onlyCompile; }
+  auto enableOptimization() const { return _enableOptimization; }
 
   const auto &outputFileName() const { return _outputName; }
 };
